@@ -210,4 +210,136 @@ else:
 
         # 避免除以零（虽然不太可能）
         if total_q > 0:
-            accuracy = (st.session_state.score
+            accuracy = (st.session_state.score / total_q) * 100
+        else:
+            accuracy = 0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("最终得分", f"{st.session_state.score} / {total_q}")
+        col2.metric("正确率", f"{accuracy:.1f}%")
+
+        st.success("恭喜你完成了整套试卷！")
+
+        if st.button("🔄 重新开始本卷"):
+            st.session_state.question_index = 0
+            st.session_state.score = 0
+            st.session_state.answer_submitted = False
+            st.rerun()
+
+    else:
+        # --- 答题界面 ---
+
+        # 1. 顶部进度条
+        progress = min((current_idx + 1) / total_q, 1.0)
+        st.progress(progress, text=f"当前进度: {current_idx + 1}/{total_q} - [{q_data.get('type', 'Unknown')}]")
+
+        # 2. 显示阅读材料
+        if 'context' in q_data and q_data['context']:
+            with st.expander("📖 阅读文章 / 背景材料 (点击展开/收起)", expanded=True):
+                st.markdown(f"*{q_data['context']}*")
+
+        st.divider()
+
+        # 3. 显示题目
+        # 注意：随机组卷后，原来的 id (如 "1", "2") 可能会乱序，这里显示 "Question + 当前序号" 更自然
+        st.subheader(f"Question {current_idx + 1}")
+        st.write(f"**{q_data['question']}**")
+
+        # 4. 答题区域
+
+        # === 客观题 ===
+        if 'options' in q_data:
+            options_dict = q_data['options']
+            option_keys = sorted(options_dict.keys())
+            formatted_options = [f"{k}. {options_dict[k]}" for k in option_keys]
+
+            # 这里的 key 很重要，加上 current_paper_id 确保切换试卷时控件重置
+            radio_key = f"q_{st.session_state.current_paper_id}_{current_idx}_radio"
+
+            user_choice_full = st.radio(
+                "请选择答案:",
+                formatted_options,
+                index=None,
+                key=radio_key,
+                disabled=st.session_state.answer_submitted
+            )
+
+            if not st.session_state.answer_submitted:
+                if st.button("提交答案"):
+                    if user_choice_full:
+                        st.session_state.answer_submitted = True
+
+                        user_choice = user_choice_full.split('.')[0]
+                        correct_choice = q_data['answer'].strip().upper()
+
+                        if user_choice == correct_choice:
+                            st.session_state.score += 1
+                            st.balloons()
+                            st.success("✅ 回答正确！")
+                        else:
+                            st.error(f"❌ 回答错误！正确答案是: **{correct_choice}**")
+                            if q_data.get('explanation'):
+                                st.info(f"💡 解析: {q_data['explanation']}")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 请先选择一个选项！")
+            else:
+                # 保持显示
+                saved_choice = st.session_state.get(radio_key)
+                if saved_choice:
+                    user_c = saved_choice.split('.')[0]
+                    correct_c = q_data['answer'].strip().upper()
+                    if user_c == correct_c:
+                        st.success("✅ 你已回答正确")
+                    else:
+                        st.error(f"❌ 你选择了 {user_c}，正确答案是 {correct_c}")
+                        if q_data.get('explanation'):
+                            st.info(f"💡 解析: {q_data['explanation']}")
+
+        # === 主观题 ===
+        else:
+            st.text_area("✍️ 在此输入你的翻译 (仅供自测，可选):", disabled=st.session_state.answer_submitted)
+
+            if not st.session_state.answer_submitted:
+                if st.button("查看参考答案"):
+                    st.session_state.answer_submitted = True
+                    st.rerun()
+            else:
+                st.markdown("### 📝 参考答案:")
+                st.success(q_data['answer'])
+
+                st.markdown("**🤔 自我评分:**")
+                col_y, col_n = st.columns(2)
+
+                eval_key = f"self_eval_{st.session_state.current_paper_id}_{current_idx}"
+
+                if eval_key not in st.session_state:
+                    if col_y.button("我觉得我对了 (得分+1)"):
+                        st.session_state.score += 1
+                        st.session_state[eval_key] = "correct"
+                        st.rerun()
+                    if col_n.button("我答错了 (不得分)"):
+                        st.session_state[eval_key] = "wrong"
+                        st.rerun()
+                else:
+                    if st.session_state[eval_key] == "correct":
+                        st.success("✅ 已记录为正确")
+                    else:
+                        st.error("❌ 已记录为错误")
+
+        # 5. 下一题按钮
+        if st.session_state.answer_submitted:
+            can_proceed = False
+            if 'options' in q_data:
+                can_proceed = True
+            else:
+                eval_key = f"self_eval_{st.session_state.current_paper_id}_{current_idx}"
+                if eval_key in st.session_state:
+                    can_proceed = True
+
+            if can_proceed:
+                st.divider()
+                if st.button("➡️ 下一题", type="primary"):
+                    st.session_state.question_index += 1
+                    st.session_state.answer_submitted = False
+                    st.rerun()
