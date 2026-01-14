@@ -11,18 +11,33 @@ st.set_page_config(
 )
 
 
-# ================= 辅助函数 =================
+# ================= 辅助函数：核心路径修复 =================
 def get_resource_path(relative_path):
+    """
+    获取资源文件的绝对路径。
+    使用 __file__ 确保永远相对于 app.py 所在的目录寻找文件，
+    而不是相对于 Streamlit 的运行根目录。
+    """
+    # 1. 兼容 PyInstaller 打包后的环境
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+
+    # 2. 正常运行环境 (本地或 Streamlit Cloud)
+    # 获取 app.py 当前所在的文件夹路径 (即 '学位证英语' 文件夹)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(current_dir, relative_path)
 
 
 def load_data(filename='data_full.json'):
+    # 使用修复后的路径函数
     file_path = get_resource_path(filename)
+
     if not os.path.exists(file_path):
-        st.error(f"❌ 找不到文件 {file_path}，请确保 data_full.json 在同一目录下！")
+        # 打印路径方便调试
+        st.error(f"❌ 找不到文件: {file_path}")
+        st.error("请确保 data_full.json 和 app.py 在同一个文件夹内！")
         return {}
+
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
@@ -36,7 +51,6 @@ if 'score' not in st.session_state:
     st.session_state.score = 0
 if 'answer_submitted' not in st.session_state:
     st.session_state.answer_submitted = False
-# 记录每一题的自测状态 (key: paper_id_q_index, value: 'correct'/'wrong')
 if 'user_answers' not in st.session_state:
     st.session_state.user_answers = {}
 
@@ -72,17 +86,13 @@ if st.session_state.current_paper:
     st.sidebar.subheader("📍 题目导航")
 
 
-    # 定义回调函数：当下拉框改变时，更新当前的 question_index
     def on_nav_change():
-        # 这里的 q_nav 是下面 selectbox 的 key，代表用户选择的第几题
         new_index = st.session_state.q_nav - 1
         if new_index != st.session_state.question_index:
             st.session_state.question_index = new_index
-            st.session_state.answer_submitted = False  # 跳转后重置提交状态
+            st.session_state.answer_submitted = False
 
 
-    # 显示下拉跳转框
-    # index 参数绑定当前的 question_index，实现双向同步（点下一题，这里也会变）
     current_q_num = st.sidebar.selectbox(
         "跳转到题目:",
         options=range(1, total_q + 1),
@@ -92,7 +102,6 @@ if st.session_state.current_paper:
         format_func=lambda x: f"第 {x} 题"
     )
 
-    # 显示当前题目类型
     current_type = questions[st.session_state.question_index].get('type', '未知')
     st.sidebar.info(f"当前题型: {current_type}")
 
@@ -103,9 +112,6 @@ if not st.session_state.current_paper:
     st.markdown("""
     ### 欢迎使用！
     👈 **请在左侧侧边栏选择一套试卷开始练习。**
-
-    **新功能提示：**
-    * 现在可以通过侧边栏的 **“题目导航”** 快速跳转到任意题目了！
     """)
 else:
     # 获取当前题目数据
@@ -118,7 +124,6 @@ else:
         st.balloons()
         st.title("🎉 测试结束！")
 
-        # 计算正确率
         accuracy = (st.session_state.score / total_q) * 100
 
         col1, col2, col3 = st.columns(3)
@@ -141,7 +146,7 @@ else:
         progress = (current_idx + 1) / total_q
         st.progress(progress, text=f"当前进度: {current_idx + 1}/{total_q} - [{q_data.get('type', 'Unknown')}]")
 
-        # 2. 显示阅读材料/完形段落 (如果有)
+        # 2. 显示阅读材料 (如果有)
         if 'context' in q_data and q_data['context']:
             with st.expander("📖 阅读文章 / 背景材料 (点击展开/收起)", expanded=True):
                 st.markdown(f"*{q_data['context']}*")
@@ -160,16 +165,14 @@ else:
             option_keys = sorted(options_dict.keys())
             formatted_options = [f"{k}. {options_dict[k]}" for k in option_keys]
 
-            # 使用 radio 组件
             user_choice_full = st.radio(
                 "请选择答案:",
                 formatted_options,
                 index=None,
-                key=f"q_{current_idx}_radio",  # 保证每一题的key不同
+                key=f"q_{current_idx}_radio",
                 disabled=st.session_state.answer_submitted
             )
 
-            # 提交按钮
             if not st.session_state.answer_submitted:
                 if st.button("提交答案"):
                     if user_choice_full:
@@ -190,21 +193,12 @@ else:
                     else:
                         st.warning("⚠️ 请先选择一个选项！")
 
-            # 已提交，显示结果
             else:
-                # 获取刚刚的选择（即便页面刷新，session_state里也有记录）
-                # 注意：这里主要靠上面的显示逻辑，但为了稳妥，我们可以重现一下判断
-                pass
-                # 这里为了简化代码，解析逻辑主要在上面提交时显示。
-                # 但Streamlit刷新后，我们需要保持显示答案：
-
-                # 重新获取用户的选择 (从radio的key中)
-                # 注意：st.session_state[f"q_{current_idx}_radio"] 存的是 "A. xxx"
+                # 保持显示用户的选择和答案状态
                 saved_choice = st.session_state.get(f"q_{current_idx}_radio")
                 if saved_choice:
                     user_c = saved_choice.split('.')[0]
                     correct_c = q_data['answer'].strip().upper()
-
                     if user_c == correct_c:
                         st.success("✅ 你已回答正确")
                     else:
@@ -227,7 +221,6 @@ else:
                 st.markdown("**🤔 自我评分:**")
                 col_y, col_n = st.columns(2)
 
-                # 构建唯一key
                 eval_key = f"self_eval_{st.session_state.current_paper}_{current_idx}"
 
                 if eval_key not in st.session_state:
@@ -246,15 +239,10 @@ else:
 
         # 5. 下一题按钮
         if st.session_state.answer_submitted:
-            # 翻译题需要先自评才能下一题，或者选择题直接下一题
-            # 这里的逻辑是：如果是选择题(有options)可以直接走
-            # 如果是翻译题，必须有评分记录(eval_key)才能走
-
             can_proceed = False
             if 'options' in q_data:
                 can_proceed = True
             else:
-                # 检查翻译题是否已自评
                 eval_key = f"self_eval_{st.session_state.current_paper}_{current_idx}"
                 if eval_key in st.session_state:
                     can_proceed = True
