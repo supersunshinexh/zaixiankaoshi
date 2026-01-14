@@ -1,8 +1,9 @@
 import streamlit as st
 import json
 import os
+import sys
 
-# 设置页面配置（标题、图标、布局）
+# 设置页面配置
 st.set_page_config(
     page_title="英语学位考试模拟系统",
     page_icon="🎓",
@@ -11,15 +12,22 @@ st.set_page_config(
 
 
 # ================= 辅助函数 =================
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+
 def load_data(filename='data_full.json'):
-    if not os.path.exists(filename):
-        st.error(f"❌ 找不到文件 {filename}，请先运行 generate_full_data.py 生成题库！")
+    file_path = get_resource_path(filename)
+    if not os.path.exists(file_path):
+        st.error(f"❌ 找不到文件 {file_path}，请确保 data_full.json 在同一目录下！")
         return {}
-    with open(filename, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
-# 初始化 Session State (用于记录答题状态)
+# 初始化 Session State
 if 'current_paper' not in st.session_state:
     st.session_state.current_paper = None
 if 'question_index' not in st.session_state:
@@ -28,13 +36,15 @@ if 'score' not in st.session_state:
     st.session_state.score = 0
 if 'answer_submitted' not in st.session_state:
     st.session_state.answer_submitted = False
+# 记录每一题的自测状态 (key: paper_id_q_index, value: 'correct'/'wrong')
 if 'user_answers' not in st.session_state:
-    st.session_state.user_answers = {}  # 记录用户的答案
+    st.session_state.user_answers = {}
 
-# ================= 侧边栏：选择试卷 =================
+# ================= 侧边栏 =================
 st.sidebar.title("📚 考试菜单")
 all_data = load_data()
 
+# 1. 选择试卷
 if all_data:
     paper_list = list(all_data.keys())
     selected_paper = st.sidebar.selectbox(
@@ -44,7 +54,7 @@ if all_data:
         placeholder="点击选择..."
     )
 
-    # 如果切换了试卷，重置状态
+    # 切换试卷时重置状态
     if selected_paper != st.session_state.current_paper:
         st.session_state.current_paper = selected_paper
         st.session_state.question_index = 0
@@ -53,25 +63,52 @@ if all_data:
         st.session_state.user_answers = {}
         st.rerun()
 
+# 2. 题目导航 (仅在已选择试卷时显示)
+if st.session_state.current_paper:
+    questions = all_data[st.session_state.current_paper]
+    total_q = len(questions)
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📍 题目导航")
+
+
+    # 定义回调函数：当下拉框改变时，更新当前的 question_index
+    def on_nav_change():
+        # 这里的 q_nav 是下面 selectbox 的 key，代表用户选择的第几题
+        new_index = st.session_state.q_nav - 1
+        if new_index != st.session_state.question_index:
+            st.session_state.question_index = new_index
+            st.session_state.answer_submitted = False  # 跳转后重置提交状态
+
+
+    # 显示下拉跳转框
+    # index 参数绑定当前的 question_index，实现双向同步（点下一题，这里也会变）
+    current_q_num = st.sidebar.selectbox(
+        "跳转到题目:",
+        options=range(1, total_q + 1),
+        index=st.session_state.question_index,
+        key="q_nav",
+        on_change=on_nav_change,
+        format_func=lambda x: f"第 {x} 题"
+    )
+
+    # 显示当前题目类型
+    current_type = questions[st.session_state.question_index].get('type', '未知')
+    st.sidebar.info(f"当前题型: {current_type}")
+
 # ================= 主界面逻辑 =================
 
 if not st.session_state.current_paper:
     st.title("🎓 英语学位考试全真模拟系统")
     st.markdown("""
     ### 欢迎使用！
-
     👈 **请在左侧侧边栏选择一套试卷开始练习。**
 
-    本系统包含：
-    * 📖 **Reading Comprehension** (阅读理解)
-    * 🔤 **Vocabulary & Structure** (词汇与结构)
-    * 🧩 **Cloze** (完形填空)
-    * 📝 **Translation** (翻译)
+    **新功能提示：**
+    * 现在可以通过侧边栏的 **“题目导航”** 快速跳转到任意题目了！
     """)
-    st.info("💡 提示：答题过程中会自动显示解析，主观题支持自测评分。")
-
 else:
-    # 获取当前试卷题目
+    # 获取当前题目数据
     questions = all_data[st.session_state.current_paper]
     total_q = len(questions)
     current_idx = st.session_state.question_index
@@ -81,6 +118,7 @@ else:
         st.balloons()
         st.title("🎉 测试结束！")
 
+        # 计算正确率
         accuracy = (st.session_state.score / total_q) * 100
 
         col1, col2, col3 = st.columns(3)
@@ -93,7 +131,6 @@ else:
             st.session_state.question_index = 0
             st.session_state.score = 0
             st.session_state.answer_submitted = False
-            st.session_state.user_answers = {}
             st.rerun()
 
     else:
@@ -120,7 +157,6 @@ else:
         # === 客观题 (选择题) ===
         if 'options' in q_data:
             options_dict = q_data['options']
-            # 将选项转换为列表供 radio 使用
             option_keys = sorted(options_dict.keys())
             formatted_options = [f"{k}. {options_dict[k]}" for k in option_keys]
 
@@ -129,7 +165,7 @@ else:
                 "请选择答案:",
                 formatted_options,
                 index=None,
-                key=f"q_{current_idx}",
+                key=f"q_{current_idx}_radio",  # 保证每一题的key不同
                 disabled=st.session_state.answer_submitted
             )
 
@@ -139,7 +175,6 @@ else:
                     if user_choice_full:
                         st.session_state.answer_submitted = True
 
-                        # 提取选项字母 (例如 "A. xxx" -> "A")
                         user_choice = user_choice_full.split('.')[0]
                         correct_choice = q_data['answer'].strip().upper()
 
@@ -155,17 +190,27 @@ else:
                     else:
                         st.warning("⚠️ 请先选择一个选项！")
 
-            # 已提交，显示结果和下一题按钮
+            # 已提交，显示结果
             else:
-                user_choice = st.session_state.get(f"q_{current_idx}", "").split('.')[0]
-                correct_choice = q_data['answer'].strip().upper()
+                # 获取刚刚的选择（即便页面刷新，session_state里也有记录）
+                # 注意：这里主要靠上面的显示逻辑，但为了稳妥，我们可以重现一下判断
+                pass
+                # 这里为了简化代码，解析逻辑主要在上面提交时显示。
+                # 但Streamlit刷新后，我们需要保持显示答案：
 
-                if user_choice == correct_choice:
-                    st.success("✅ 你已回答正确")
-                else:
-                    st.error(f"❌ 你选择了 {user_choice}，正确答案是 {correct_choice}")
-                    if q_data.get('explanation'):
-                        st.info(f"💡 解析: {q_data['explanation']}")
+                # 重新获取用户的选择 (从radio的key中)
+                # 注意：st.session_state[f"q_{current_idx}_radio"] 存的是 "A. xxx"
+                saved_choice = st.session_state.get(f"q_{current_idx}_radio")
+                if saved_choice:
+                    user_c = saved_choice.split('.')[0]
+                    correct_c = q_data['answer'].strip().upper()
+
+                    if user_c == correct_c:
+                        st.success("✅ 你已回答正确")
+                    else:
+                        st.error(f"❌ 你选择了 {user_c}，正确答案是 {correct_c}")
+                        if q_data.get('explanation'):
+                            st.info(f"💡 解析: {q_data['explanation']}")
 
         # === 主观题 (翻译题) ===
         else:
@@ -182,26 +227,39 @@ else:
                 st.markdown("**🤔 自我评分:**")
                 col_y, col_n = st.columns(2)
 
-                # 自测按钮逻辑
-                # 这里为了简化，只有还没自评过才显示按钮
-                if f"self_eval_{current_idx}" not in st.session_state:
+                # 构建唯一key
+                eval_key = f"self_eval_{st.session_state.current_paper}_{current_idx}"
+
+                if eval_key not in st.session_state:
                     if col_y.button("我觉得我对了 (得分+1)"):
                         st.session_state.score += 1
-                        st.session_state[f"self_eval_{current_idx}"] = "correct"
+                        st.session_state[eval_key] = "correct"
                         st.rerun()
                     if col_n.button("我答错了 (不得分)"):
-                        st.session_state[f"self_eval_{current_idx}"] = "wrong"
+                        st.session_state[eval_key] = "wrong"
                         st.rerun()
                 else:
-                    if st.session_state[f"self_eval_{current_idx}"] == "correct":
+                    if st.session_state[eval_key] == "correct":
                         st.success("✅ 已记录为正确")
                     else:
                         st.error("❌ 已记录为错误")
 
-        # 5. 下一题按钮 (仅在提交后显示)
+        # 5. 下一题按钮
         if st.session_state.answer_submitted:
             # 翻译题需要先自评才能下一题，或者选择题直接下一题
-            if 'options' in q_data or f"self_eval_{current_idx}" in st.session_state:
+            # 这里的逻辑是：如果是选择题(有options)可以直接走
+            # 如果是翻译题，必须有评分记录(eval_key)才能走
+
+            can_proceed = False
+            if 'options' in q_data:
+                can_proceed = True
+            else:
+                # 检查翻译题是否已自评
+                eval_key = f"self_eval_{st.session_state.current_paper}_{current_idx}"
+                if eval_key in st.session_state:
+                    can_proceed = True
+
+            if can_proceed:
                 st.divider()
                 if st.button("➡️ 下一题", type="primary"):
                     st.session_state.question_index += 1
